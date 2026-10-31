@@ -56,3 +56,4 @@ export async function payForReport(wallet:WalletInterface,quote:PaymentQuote,app
 
 export {mintReportPass,reconcileMint,IndexedDBMintJournal,type MintIntent,type MintReceipt,type MintRecord,type MintJournal} from './mint.ts';
 export {canonical,reportDigest,reportCommitment,type PublishedReport} from './report-contract.ts';
+export {purchasePublishedReport,IndexedDBPurchaseJournal,signReportOffer,type ReportOffer,signPassRegistration,signReportAccess,type ReportQuote,type PurchaseResult,type PurchaseRecord,type PurchaseJournal,type PassRegistration,type SignedPassRegistration,type AccessChallenge} from './market.ts';

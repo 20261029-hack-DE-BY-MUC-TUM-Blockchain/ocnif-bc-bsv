@@ -12,24 +12,54 @@ import {HttpTokenOverlay} from '../src/overlay.ts';
 import {mintReportPass,type MintRecord} from '../src/mint.ts';
 import {prepareSwap,approveSwap,completeSwap,receiveSwapProceeds,type SwapRecord} from '../src/swap.ts';
 import {transferScript,tokenOwner} from '../src/token.ts';
+import {attachMarket} from './market.ts';
+import {purchasePublishedReport,signReportOffer,signPassRegistration,signReportAccess,type PurchaseRecord,type ReportQuote} from '../src/market.ts';
+import {reportDigest,type PublishedReport} from '../src/report-contract.ts';
 class Journal<T>{rows=new Map<string,T>();async reserve(k:string,v:T){if(this.rows.has(k))throw Error('duplicate');this.rows.set(k,v);}async update(k:string,v:T){this.rows.set(k,v);}async get(k:string){return this.rows.get(k);}}
 async function freePort(){const s=net.createServer();await new Promise<void>(r=>s.listen(0,'127.0.0.1',r));const p=(s.address() as net.AddressInfo).port;await new Promise<void>(r=>s.close(()=>r()));return p;}
-test('real overlay validates mint ancestry, rejects forgery and admits one two-wallet atomic swap',async()=>{
+test('real BRC-121 paid report, issuer pass, ownership challenge and two-wallet swap enforce payment/token boundaries',async()=>{
  const chain=await createMockChain();const dir=mkdtempSync(join(tmpdir(),'ocnif-overlay-'));const port=await freePort();
- const config=loadConfig({OVERLAY_PRIVATE_KEY:PrivateKey.fromRandom().toHex(),INTERNAL_TOKEN:'test-only-not-a-production-token-1234',OVERLAY_PORT:String(port),OVERLAY_PUBLIC_URL:`http://127.0.0.1:${port}`,OVERLAY_DB:join(dir,'overlay.sqlite')});
- const server=await startOverlay(config,{chainTracker:chain.chainTracker,broadcaster:{async broadcast(tx){const txid=tx.id('hex');await chain.services.postBeef(Beef.fromBinary(tx.toBEEF()) as never,[txid]);return {status:'success',txid,message:'local mock chain'};}}});
+ const seller=await chain.makeWallet(),buyer=await chain.makeWallet(),merchant=await chain.makeWallet();await chain.fund(seller);await chain.fund(buyer);
+ const issuerIdentityKey=(await seller.getPublicKey({identityKey:true})).publicKey;const buyerId=(await buyer.getPublicKey({identityKey:true})).publicKey;
+ const report:PublishedReport={id:'published-test',title:'Reviewed lab report',content:'Synthetic test evidence only',cards:[],created_at:'now',published_at:'now',source:'user-approved'};
+ let market:Awaited<ReturnType<typeof attachMarket>>;
+ const config=loadConfig({OVERLAY_PRIVATE_KEY:PrivateKey.fromRandom().toHex(),INTERNAL_TOKEN:'test-only-not-a-production-token-1234',OVERLAY_PORT:String(port),OVERLAY_PUBLIC_URL:`http://127.0.0.1:${port}`,OVERLAY_DB:join(dir,'overlay.sqlite'),BSV_MARKET_DB:join(dir,'market.sqlite'),BSV_ISSUER_IDENTITY_KEY:issuerIdentityKey,BSV_NETWORK:(await seller.getNetwork({})).network==='mainnet'?'main':'test'});
+ const server=await startOverlay(config,{chainTracker:chain.chainTracker,broadcaster:{async broadcast(tx){const txid=tx.id('hex');await chain.services.postBeef(Beef.fromBinary(tx.toBEEF()) as never,[txid]);return {status:'success',txid,message:'local mock chain'};}}},async(app)=>{market=await attachMarket(app,config,new HttpTokenOverlay(config.overlayUrl),merchant,async id=>id===report.id?report:null);});
+ const request=(path:string,body?:unknown)=>fetch(config.overlayUrl+path,{method:body?'POST':'GET',headers:body?{'Content-Type':'application/json'}:{},body:body?JSON.stringify(body):undefined});
  try {
-  const seller=await chain.makeWallet(),buyer=await chain.makeWallet();await chain.fund(seller);await chain.fund(buyer);
-  const issuerIdentityKey=(await seller.getPublicKey({identityKey:true})).publicKey;const buyerId=(await buyer.getPublicKey({identityKey:true})).publicKey;
-  const network=(await seller.getNetwork({})).network;const intent={id:'mock-mint',reportId:'published-test',reportDigest:'a'.repeat(64),issuerIdentityKey,network,keyIndex:0};
+  const network=(await seller.getNetwork({})).network;const intent={id:'mock-mint',reportId:'published-test',reportDigest:reportDigest(report),issuerIdentityKey,network,keyIndex:0};
   const overlay=new HttpTokenOverlay(config.overlayUrl);const mints=new Journal<MintRecord>();const mint=await mintReportPass(seller,intent,{...intent},overlay,mints);
+  assert.equal((await request('/v1/reports/private/quote')).status,404);
+  assert.equal((await fetch(config.overlayUrl+'/v1/config',{headers:{Origin:'https://untrusted.example'}})).status,403);
+  const quote=await (await request('/v1/reports/published-test/quote')).json() as ReportQuote;
+  const approvalPay={id:quote.id,recipientIdentityKey:quote.recipientIdentityKey,maxSatoshis:quote.satoshis,network:quote.network,reportDigest:quote.reportDigest};
+  assert.equal((await request(`/v1/quotes/${quote.id}/pay`)).status,402);
+  const payments=new Journal<PurchaseRecord>();const purchased=await purchasePublishedReport(buyer,config.overlayUrl,quote,approvalPay,payments);
+  assert.equal(purchased.payment.accepted,true);assert.equal(purchased.payment.satoshisPaid,100);assert.deepEqual(purchased.report,report);
+  await assert.rejects(purchasePublishedReport(buyer,config.overlayUrl,quote,approvalPay,payments),/duplicate/);
+  const saved=await payments.get(`purchase:${buyerId}:${quote.id}`);assert.ok(saved?.payment);
+  assert.equal((await request(`/v1/quotes/${quote.id}/pay`,{payment:saved.payment})).status,402);
+  assert.equal((await request(`/v1/quotes/${quote.id}/pay`,{payment:saved.payment,extra:true})).status,400);
   assert.equal(mint.status,'overlay_admitted');assert.equal((await overlay.lookup(mint.outpoint))?.spent,false);
   await assert.rejects(mintReportPass(seller,intent,{...intent},overlay,mints),/duplicate/);
+  const registration=await signPassRegistration(seller,mint);
+  assert.equal((await request('/v1/passes',{...registration,signature:[...registration.signature.slice(0,-1),registration.signature.at(-1)!^1]})).status,400);
+  assert.equal((await request('/v1/passes',registration)).status,201);
+  const challengeResponse=await request('/v1/reports/published-test/token-challenge',{outpoint:mint.outpoint,holderIdentityKey:issuerIdentityKey,keyIndex:0});assert.equal(challengeResponse.status,200);
+  const challenge=await challengeResponse.json();const access=await signReportAccess(seller,challenge);
+  const released=await request('/v1/reports/published-test/token-access',access);assert.equal(released.status,200);assert.deepEqual((await released.json()).report,report);
+  assert.equal((await request('/v1/reports/published-test/token-access',access)).status,409);
   const forged=await buyer.createAction({description:'Mock token forgery boundary test',outputs:[{satoshis:1,lockingScript:transferScript({id:mint.tokenId,amount:'2',ownerPkh:tokenOwner(buyerId,0)}).toHex(),outputDescription:'Invalid token supply'}],options:{randomizeOutputs:false,acceptDelayedBroadcast:false}});
   assert.ok(forged.tx&&forged.txid);await assert.rejects(overlay.submit(Array.from(forged.tx)));assert.equal(await overlay.lookup(`${forged.txid}.0`),null);
   const offer={id:'mock-offer',outpoint:mint.outpoint,tokenId:mint.tokenId,tokenAmount:'1',priceSatoshis:100,sellerIdentityKey:issuerIdentityKey,sellerKeyIndex:0,network};const approval={...offer,buyerIdentityKey:buyerId};const swaps=new Journal<SwapRecord>();
+  assert.equal((await request('/v1/offers',await signReportOffer(seller,{reportId:report.id,reportDigest:reportDigest(report),offer}))).status,201);
+  assert.equal((await (await request('/v1/reports/published-test/offers')).json()).offers.length,1);
   const prepared=await prepareSwap(buyer,offer,approval,0,overlay,swaps);const signature=await approveSwap(seller,prepared,approval,overlay);const receipt=await completeSwap(buyer,prepared,signature,approval,overlay,swaps);
   assert.equal(receipt.status,'overlay_admitted');await receiveSwapProceeds(seller,receipt);assert.equal((await overlay.lookup(mint.outpoint))?.spent,true);assert.equal((await overlay.lookup(`${receipt.txid}.1`))?.spent,false);
   assert.equal(Transaction.fromAtomicBEEF(receipt.transaction).outputs[0].satoshis,100);
- }finally{await server.close();await chain.close();rmSync(dir,{recursive:true,force:true});}
+  assert.equal((await request('/v1/reports/published-test/token-challenge',{outpoint:mint.outpoint,holderIdentityKey:issuerIdentityKey,keyIndex:0})).status,400);
+  assert.equal((await (await request('/v1/reports/published-test/offers')).json()).offers.length,0);
+  const nextChallenge=await request('/v1/reports/published-test/token-challenge',{outpoint:`${receipt.txid}.1`,holderIdentityKey:buyerId,keyIndex:0});assert.equal(nextChallenge.status,200);
+  const nextAccess=await signReportAccess(buyer,await nextChallenge.json());assert.equal((await request('/v1/reports/published-test/token-access',nextAccess)).status,200);
+ }finally{await server.close();market!.close();await chain.close();rmSync(dir,{recursive:true,force:true});}
 });

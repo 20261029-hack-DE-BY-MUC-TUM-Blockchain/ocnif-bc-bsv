@@ -1,61 +1,72 @@
-# Ocnif BSV wallet payments and atomic security-credit exchange
+# Ocnif BSV report payments and transferable access passes
 
-## Setup / Instalación
+This repository contains a browser wallet library and a standalone BSV-21 overlay/report service. A user can buy an explicitly published security report with BSV, or obtain it while holding an issuer-registered BSV-21 access pass. A pass can be sold for an exact BSV price in one atomic transaction, signed independently by the seller and buyer. User keys stay in their standard BRC-100 wallets.
 
-This browser library connects Ocnif to a standard BRC-100 wallet through `@bsv/sdk`3.2.1. User keys and signing remain inside BSV Desktop or BSV Browser. BSV Desktop uses the Wallet Toolbox engine; this library does not create a custodial server wallet.
+La biblioteca y el servicio permiten pagar un informe publicado con BSV o acceder con un pase BSV-21 transferible. Comprador y vendedor autorizan por separado el intercambio atómico. Las claves de los usuarios permanecen en sus billeteras BRC-100.
 
-Esta biblioteca conecta Ocnif a una billetera BRC-100 estándar. Las claves y firmas permanecen en BSV Desktop o BSV Browser. No crea una billetera de usuario bajo custodia del servidor.
+## Standalone setup
+
+Pinned dependencies: SDK 3.2.1, Wallet Toolbox 2.14.9, Overlay 2.6.4, OverlayExpress 2.7.4 and official BRC-121 package `@bsv/402-pay` 0.3.3. The token topic, lookup service and mock-chain harness adapt the user-supplied BSV TBC26 Developer Pack; source attribution is retained.
 
 ```sh
 npm ci --ignore-scripts
 npm rebuild better-sqlite3
-npm test
 npm run typecheck
+npm test
+npm run test:server
+npm run build
+# Populate an ignored, mode-0600 .env from .env.example first.
+node --env-file=.env dist/server/main.js
 ```
 
-Install this repository by immutable Git commit in the consuming web application. Its package export is TypeScript; configure the browser bundler to transpile `ocnif-bc-bsv`. There are no private environment variables and no deployed server in this package.
+The service listens on `OVERLAY_PORT` (8097 by default). All service configuration is in `server/config.ts` and documented in `.env.example`. Give it a writable data directory. The three SQLite databases use DELETE journaling and a busy timeout; run a single service replica against these files. PostgreSQL/shared multi-replica storage is not implemented.
 
-## Browser integration / Integración
+`OVERLAY_PRIVATE_KEY` is a distinct operational overlay identity. `INTERNAL_TOKEN` authorizes reads of the backend's `/internal/reports/:id` endpoint and overlay administrative operations. Provider keys are never needed here. Only reports returned with `source:'user-approved'` and a publication timestamp can be quoted, minted or delivered. Viewing a private conversation is not publication.
 
-Call `connectWallet()` from a user action. It returns `{wallet,network,identityKey}` after the wallet approves its connection. Read the actual network; the sponsor's standard setup uses sponsor-funded mainnet satoshis, although the track also accepts testnet.
+`BSV_ISSUER_IDENTITY_KEY` is the public identity of the user's standard wallet. Pass setup requires no user private key. Optional `BSV_MERCHANT_PRIVATE_KEY` controls a separate service earnings wallet for direct BRC-121 sales; never copy a user's wallet key into it. When absent, direct sales return HTTP 503 `setup_required`. When the issuer is absent, pass registration also reports `setup_required`. Back up operator-controlled earnings keys and persistent wallet state before accepting real payments.
 
-`payForReport(wallet,quote,approval,journal)` takes a published report's SHA256 digest and a separately approved payment intent:
+The configured Arcade and Chaintracks endpoints must match the selected `BSV_NETWORK`. The documented public endpoints are sponsor mainnet infrastructure; testnet requires explicit matching endpoints. The service validates transaction SPV and token ancestry. It does not run its own Bitcoin node or independently guarantee miner inclusion.
 
-- `quote`: `{id,recipientIdentityKey,satoshis,network,expiresAt,reportDigest}`. `expiresAt` is Unix milliseconds.
-- `approval`: `{id,recipientIdentityKey,maxSatoshis,network,reportDigest}`. Obtain this from the user's review of the intended payment; never manufacture it from untrusted model output.
-- `journal`: one `IndexedDBPaymentJournal` for the browser origin. It atomically reserves each wallet/intent pair across browser tabs before requesting an action.
+## Browser payment contract
 
-The adapter derives the recipient's BRC-29 output, asks the wallet to sign/broadcast with immediate broadcast mode, and verifies the returned AtomicBEEF transaction ID, intended amount and report-digest commitment. The result includes the exact output index, sender identity and BRC-29 remittance data. The approved amount covers the recipient payment; the wallet displays and controls network fees separately.
+Install the library from an immutable Git commit. Its TypeScript export must be transpiled by the browser bundler. Server modules are not exported. Connect with `connectWallet()` from a user action; inspect the actual returned network and identity.
 
-Payment outputs and the approved public digest are on-chain data. Supply only an explicitly published report digest. This function makes a payment associated with a report; it does not itself grant access to the separate Cardano paid-report endpoint, create escrow, refund funds or implement a token swap.
+| Request | Result |
+|---|---|
+| `GET /v1/config` | Actual configured network, public overlay/merchant/issuer identities, payment/pass readiness |
+| `GET /v1/reports/:id/quote` | `ReportQuote`: id, reportId, title, recipientIdentityKey, satoshis, network, expiresAt, reportDigest |
+| `GET /v1/quotes/:id/pay` | Standard BRC-121 402 challenge, or delivery with the five payment headers |
+| `POST /v1/quotes/:id/pay` | Same verification with JSON `{payment:{x-bsv-beef,x-bsv-sender,x-bsv-nonce,x-bsv-time,x-bsv-vout}}` |
 
-La intención vincula destinatario, informe, importe, red y caducidad. El usuario debe revisarla por separado. El pago y la comisión se aprueban en la billetera. La función asocia un pago a un informe público; no desbloquea la ruta Cardano, no crea escrow y no implementa un intercambio de tokens.
+The JSON transport avoids large BEEF proofs exceeding reverse-proxy header limits. The payment protocol and wallet verification remain BRC-121. CORS is restricted to configured browser origins; server clients without an Origin header may use the public paid API.
 
-## Receipts and recovery / Recibos y recuperación
+Show the quote and separately obtain `{id,recipientIdentityKey,maxSatoshis,network,reportDigest}` as `PaymentApproval`. Call `purchasePublishedReport(wallet,baseUrl,quote,approval,new IndexedDBPurchaseJournal())`. It reserves the intent across tabs, constructs one BRC-121 payment, adds an on-chain report-digest commitment, verifies the actual wallet outputs, saves the proof, and submits it once. The server requires the matching published digest, internalizes the BRC-29 output into its merchant wallet, and atomically claims the transaction ID in SQLite before returning the report.
 
-The return status is `wallet_broadcast` with `confirmed:false`. This is wallet-provided transaction evidence, not independent block inclusion or recipient acceptance. Retain the AtomicBEEF and remittance data for recipient SPV verification/internalization and check the transaction on the correct-network explorer. Never label a test transaction as a real payment.
+The result includes `{report,payment:{accepted:true,txid,satoshisPaid,senderIdentityKey},confirmed:false}`. Acceptance is actual merchant-wallet SPV/internalization evidence; it is not block confirmation. Network fees are additional and reviewed in the standard wallet. Errors retain `review_required`; inspect the existing wallet action and recorded proof before approving a different intent. The client never automatically pays again. Replaying a transaction is rejected. The older `payForReport` primitive only broadcasts a report-associated payment; use `purchasePublishedReport` for delivery through this service.
 
-A repeated intent is blocked. Any error after reservation records `review_required`; cancellation, an interrupted wallet call and an ambiguous broadcast require reviewing the existing wallet action before a new intent is approved. The library never automatically retries a payment. Clearing site storage removes the local journal, so the wallet's action history and an application-side durable receipt remain necessary for long-term reconciliation.
+## Mint, list and trade a report pass
 
-## Atomic exchange / Intercambio atómico
+1. Fetch `GET /v1/reports/:id/pass-intent`. It returns `{id,reportId,reportDigest,issuerIdentityKey,network,keyIndex}`. The user separately approves that exact intent. Call `mintReportPass(wallet,intent,approval,overlay,new IndexedDBMintJournal())`. The wallet creates a fixed supply of one token with a published-report commitment. Minting spends fees and one token satoshi; it is never automatic.
+2. After `overlay_admitted`, call `signPassRegistration(wallet,receipt)` and POST its `{registration,signature}` to `/v1/passes`. The server verifies the configured issuer's signature, real token admission, one-token amount, ownership and report commitment. A self-minted unregistered token grants no access.
+3. Form a `SwapOffer`: `{id,outpoint,tokenId,tokenAmount:'1',priceSatoshis,sellerIdentityKey,sellerKeyIndex,network}`. Outpoints use `txid.vout`; token IDs use `deployTxid_vout`. Call `signReportOffer(wallet,{reportId,reportDigest,offer})` and POST its `{listing,signature}` to `/v1/offers`. Listing requires the current holder's signature. `GET /v1/reports/:id/offers` returns at most ten listings whose token ownership the overlay still validates.
+4. The buyer reviews the offer and creates `approval={...offer,buyerIdentityKey}`. `prepareSwap(buyerWallet,offer,approval,buyerKeyIndex,overlay,new IndexedDBSwapJournal())` reserves funding without broadcasting. Pass its `PreparedSwap` artifact to the seller through a trusted channel; it contains public identities, transaction ancestry and remittance data.
+5. The seller independently reviews the price, buyer and token. `approveSwap(sellerWallet,prepared,approval,overlay)` returns the token-input signature using `SIGHASH_ALL|FORKID`, committing to every input and output. Return that signature to the buyer.
+6. `completeSwap(buyerWallet,prepared,signature,approval,overlay,journal)` signs the funding and broadcasts one transaction. Output 0 pays the seller, output 1 transfers the token, and remaining outputs are wallet change. `receiveSwapProceeds(sellerWallet,receipt)` lets the seller SPV-verify/internalize its BRC-29 payment.
 
-The exchange sells an entire BSV-21 token UTXO for an exact BSV price in one transaction. A token can represent a transferable security-analysis credit, but its issuer must separately publish the actual redemption terms. The library does not promise a redemption service or token value. It accepts an existing genuine token indexed by the sponsor's BSV-21 Token Kit overlay (`tm_tokenkit`, `ls_tokenkit`). A wallet basket entry alone cannot establish token validity.
+`new HttpTokenOverlay(explicitUrl)` uses standard `/submit` with `X-Topics:["tm_tokenkit"]` and `/lookup` with service `ls_tokenkit`. It checks both transaction/metadata consistency and actual topic admission; HTTP 200 alone is insufficient. Missing ancestors must be submitted in order. If synchronization fails after broadcast, `reconcileMint` or `reconcileSwap` resubmits the recorded transaction without signing or paying again.
 
-1. Configure `new HttpTokenOverlay(explicitUrl)` with an operator you trust to validate BSV-21 ancestry. HTTPS is required except localhost development. This discloses the queried outpoint and transaction to that operator. It uses the starter kit's standard `/lookup` and `/submit` routes. Token ancestors must already be indexed in order; this client never guesses an overlay or fabricates a deployment.
-2. Obtain an actual token outpoint and the seller's public identity/key index from the overlay. Create an offer with `{id,outpoint,tokenId,tokenAmount,priceSatoshis,sellerIdentityKey,sellerKeyIndex,network}`. Outpoints use `txid.vout`; token IDs use `deployTxid_vout`. Token amounts are positive uint64 integer strings. The exchange transfers the whole amount of this one UTXO.
-3. The buyer reviews that exact offer and their public identity, producing `approval = {...offer,buyerIdentityKey}` from the UI. Call `prepareSwap(buyerWallet,offer,approval,buyerKeyIndex,overlay,journal)` using an `IndexedDBSwapJournal`. The wallet reserves its funding; nothing is broadcast. The result is a `PreparedSwap` containing the partial AtomicBEEF, wallet reference and public remittance information. Exchange this artifact through an authenticated channel; it reveals transaction ancestry and identities.
-4. The seller independently reviews the offer, buyer identity, price and token amount. Call `approveSwap(sellerWallet,prepared,approval,overlay)`. The wallet signs the token input with `SIGHASH_ALL | FORKID`, committing to every input and output. Seller keys stay in the standard wallet. Changing the price, buyer token output or inputs invalidates the signature.
-5. Return the unlocking-script hex to the buyer. Call `completeSwap(buyerWallet,prepared,signature,approval,overlay,journal)`. The buyer wallet adds its funding signatures and broadcasts one transaction: output 0 pays the seller with BRC-29, output 1 transfers all token units to the buyer, and remaining outputs are ordinary wallet change. Network fees are additional and controlled by the buyer wallet.
-6. Retain the receipt. `overlay_admitted` means the configured overlay admitted the token output and the buyer wallet internalized it. `confirmed:false` remains explicit; this is not proof of block inclusion. The seller calls `receiveSwapProceeds(sellerWallet,receipt)` to validate the BRC-29 payment and let its wallet SPV-check/internalize the proceeds.
+Offers have no enforced expiry, escrow, refund or server cancellation. Both wallet approvals remain necessary after listing. There is no automated counterparty or agent-controlled spending authority.
 
-If broadcast succeeds but the overlay or wallet synchronization fails, the receipt is `overlay_pending`. Call `reconcileSwap(buyerWallet,receipt,overlay,journal)` with the recorded receipt to resubmit that same transaction and synchronize the token. This path never creates or signs another payment. A duplicate completion is blocked. An uncertain wallet result becomes `review_required` and needs wallet-history reconciliation. Clearing browser storage removes this local protection; retain receipts separately. Offers have no enforced expiry, escrow, refund or cancellation mechanism; do not describe them as expiring orders.
+## Use the transferred pass
 
-El intercambio transfiere un UTXO BSV-21 completo a cambio del precio exacto en BSV, dentro de una sola transacción. Comprador y vendedor revisan la misma oferta por separado y firman con sus billeteras estándar. El overlay configurado valida el historial del token; una entrada en la cesta local no basta. Si el pago se emite pero el overlay falla, `reconcileSwap` vuelve a enviar la misma transacción, sin pagar otra vez. No hay garantía de canje, reembolso ni caducidad de la oferta.
+POST `/v1/reports/:id/token-challenge` with `{outpoint,holderIdentityKey,keyIndex}`. The service requires an unspent admitted output of a registered token and returns `{id,reportId,reportDigest,outpoint,holderIdentityKey,keyIndex,expiresAt}`. Call `signReportAccess(wallet,challenge)` and POST its `{challengeId,signature}` to `/v1/reports/:id/token-access`.
 
-## Validation and current limit / Validación y límite actual
+The service verifies the current holder's BRC-100 signature, checks overlay ownership again, atomically consumes the challenge and delivers the published report. A transferred/spent output and replayed challenge are rejected. Access lasts while the holder controls the admitted pass; it is transferable access to this report, not a promise of token value or unrestricted future agent services. Ownership is the configured overlay's current view; unmined transactions remain explicitly unconfirmed.
 
-Eleven tests cover payment approvals, IndexedDB atomicity, real HTTP/BEEF overlay parsing, exact-output seller signatures, tamper rejection, duplicate completion, ambiguous broadcast and recovery without a second payment. The two-wallet integration test uses actual Wallet Toolbox wallets, SQLite state, a locally mined mock chain, complete transaction SPV verification and seller BRC-29 internalization. Its token admission boundary is a test fixture; the test does not establish a production overlay's token-conservation rules. The fixture derives from the user-supplied BSV TBC26 Token Kit mock-chain harness, with attribution in the source.
+## Validation and evidence limits
 
-No real wallet payment, real token deployment, publicly hosted overlay or explorer-confirmed swap has been recorded. The atomic exchange is implemented and tested locally; sponsor qualification still requires a meaningful deployed product flow and real agent payment evidence on the permitted network. There is no server with user wallet keys in this package.
+Eleven focused library tests cover approval binding, durable browser intent reservation, real BEEF parsing, exact-output signatures, tampering, ambiguous broadcast and recovery without a second payment. An additional HTTP integration test uses actual OverlayExpress, SQLite, three real Wallet Toolbox wallets and a locally mined mock chain. It checks real BRC-121 delivery, unpublished-report denial, origin/unknown-field rejection, replay denial, issuer signature verification, mint ancestry, supply forgery rejection, signed offer listing, two-wallet atomic exchange, seller internalization and pass access before/after transfer.
 
-For isolated verification, the Dockerfile and local-only Compose manifest run the tests as a short-lived task. They are not a long-running production service. The pre-commit hook runs Gitleaks against staged files.
+All validation transactions use the local mock chain. No mainnet payment, mainnet mint, public-chain-confirmed swap, user microphone action or sponsor acceptance is claimed. Production wallet configuration, a hosted overlay and independently approved real counterparties are still needed for that evidence.
+
+El pase se canjea por acceso al informe mientras el usuario conserve el UTXO admitido. Tras el intercambio, el antiguo titular pierde acceso y el nuevo titular firma su propio desafío. Las pruebas usan una cadena local; no demuestran pagos ni confirmaciones en mainnet. La billetera muestra y autoriza cada gasto real.

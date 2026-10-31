@@ -1,0 +1,21 @@
+{
+  "name": "ocnif-bc-bsv",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "node --test src/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@bsv/sdk": "3.2.1"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.5",
+    "fake-indexeddb": "6.2.7",
+    "typescript": "7.0.2"
+  }
+}

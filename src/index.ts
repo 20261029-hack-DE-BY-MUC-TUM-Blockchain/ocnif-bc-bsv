@@ -1,6 +1,10 @@
-import {WalletClient,P2PKH,PublicKey,Random,Transaction,Utils,LockingScript,type WalletInterface,type WalletNetwork,type WalletProtocol} from '@bsv/sdk';
+import {WalletClient,P2PKH,PublicKey,Random,Transaction,Utils,LockingScript,type WalletInterface,type WalletNetwork} from '@bsv/sdk';
 export {IndexedDBPaymentJournal} from './journal.ts';
-export const BRC29_PROTOCOL:WalletProtocol=[2,'3241645161d8'];
+export {HttpTokenOverlay} from './overlay.ts';
+export {TOKEN_PROTOCOL,readToken,tokenOwner,transferScript,type Token} from './token.ts';
+export {IndexedDBSwapJournal,prepareSwap,approveSwap,completeSwap,reconcileSwap,receiveSwapProceeds,verifySellerSignature,type SwapOffer,type SwapApproval,type PreparedSwap,type SwapReceipt,type SwapJournal,type SwapRecord,type TokenOverlay,type OverlayToken} from './swap.ts';
+import {BRC29_PROTOCOL} from './protocol.ts';
+export {BRC29_PROTOCOL} from './protocol.ts';
 export interface PaymentQuote {id:string;recipientIdentityKey:string;satoshis:number;network:WalletNetwork;expiresAt:number;reportDigest:string}
 export interface PaymentApproval {id:string;recipientIdentityKey:string;maxSatoshis:number;network:WalletNetwork;reportDigest:string}
 export interface PaymentReceipt {status:'wallet_broadcast';confirmed:false;quoteId:string;network:WalletNetwork;tx:number[];txid:string;outputIndex:number;satoshis:number;derivationPrefix:string;derivationSuffix:string;senderIdentityKey:string;reportDigest:string}

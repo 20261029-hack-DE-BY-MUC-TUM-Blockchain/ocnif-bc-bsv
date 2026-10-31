@@ -114,6 +114,17 @@ export class HttpTokenOverlay implements TokenOverlay {
       signal: AbortSignal.timeout(15_000),
       redirect: 'error',
     });
-    await responseJson(response);
+    const answer = await responseJson(response) as {tm_tokenkit?:{outputsToAdmit?:unknown}};
+    const admitted = answer?.tm_tokenkit?.outputsToAdmit;
+    if (!Array.isArray(admitted) || !admitted.every(Number.isSafeInteger))
+      throw new Error('invalid_token_overlay_admission');
+    // A duplicate submission also admits nothing. Check existing outputs before
+    // distinguishing it from a token that failed the ancestry/conservation rules.
+    const txid = tx.id('hex');
+    for (const [index, output] of tx.outputs.entries()) {
+      if (!readToken(output.lockingScript, `${txid}.${index}`)) continue;
+      if (!admitted.includes(index) && !(await this.lookup(`${txid}.${index}`)))
+        throw new Error('token_overlay_output_not_admitted');
+    }
   }
 }

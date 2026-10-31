@@ -46,7 +46,7 @@ test('HTTP overlay validates real BEEF against requested outpoint and metadata b
         assert.equal(req.headers['x-topics'], '["tm_tokenkit"]');
         assert.equal(Transaction.fromBEEF(Array.from(body)).id('hex'), tx.id('hex'));
         submitted = true;
-        res.end('{}');
+        res.end(JSON.stringify({tm_tokenkit:{outputsToAdmit:[]}}));
       } else {
         res.statusCode = 404;
         res.end('{}');

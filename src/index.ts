@@ -53,3 +53,6 @@ export async function payForReport(wallet:WalletInterface,quote:PaymentQuote,app
     await journal.update(key,{status:'wallet_broadcast',quote,receipt});return receipt;
   }catch(error){await journal.update(key,{status:'review_required',quote});throw error;}
 }
+
+export {mintReportPass,reconcileMint,IndexedDBMintJournal,type MintIntent,type MintReceipt,type MintRecord,type MintJournal} from './mint.ts';
+export {canonical,reportDigest,reportCommitment,type PublishedReport} from './report-contract.ts';

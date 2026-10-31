@@ -4,7 +4,8 @@ COPY package.json package-lock.json ./
 RUN npm ci --ignore-scripts
 RUN npm rebuild better-sqlite3
 COPY src ./src
-COPY tsconfig.json ./
+COPY server ./server
+COPY tsconfig.json tsconfig.server.json tsconfig.server-test.json ./
 RUN npm run typecheck
 RUN rm -rf node_modules/typescript node_modules/@typescript /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx /opt/yarn-* /usr/local/bin/yarn /usr/local/bin/yarnpkg
 USER node

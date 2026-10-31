@@ -4,3 +4,32 @@ node_modules/
 !.env.example
 .DS_Store
 coverage/
+
+dist/
+data/
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+# Keys and certificates
+*.key
+*.pem
+*.p12
+*.pfx
+*.jks
+*.keystore
+# Cloud credentials
+credentials.json
+service-account*.json
+.aws/
+.gcloud/
+gha-creds-*.json
+# SSH
+id_rsa
+id_ed25519
+*.pub.local
+# Wallet material
+*.mnemonic
+*.seed
+wallet.json
+keystore/

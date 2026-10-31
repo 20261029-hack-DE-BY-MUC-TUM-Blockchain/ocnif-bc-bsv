@@ -1,12 +1,38 @@
+# Local development only. Production uses the platform's Azure Container Apps IaC.
 services:
-  verify-bsv:
+  bsv:
     build: .
-    image: ocnif-bc-bsv:local
-    restart: "no"
-    mem_limit: 512m
-    cpus: 1
+    image: ocnif-bc-bsv:${IMAGE_TAG:-local}
+    env_file: .env
+    environment:
+      OVERLAY_PORT: ${OVERLAY_PORT:-8097}
+      OVERLAY_INTERNAL_URL: http://127.0.0.1:${OVERLAY_PORT:-8097}
+      OVERLAY_DB: /data/overlay.sqlite
+      BSV_MARKET_DB: /data/market.sqlite
+      BSV_MERCHANT_DB: /data/merchant.sqlite
+    ports:
+      - "127.0.0.1:${OVERLAY_PORT:-8097}:${OVERLAY_PORT:-8097}"
+    volumes:
+      - bsv_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "--input-type=module", "-e", "import {loadConfig} from './dist/server/config.js'; const c=loadConfig(); fetch(c.overlayInternalUrl+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1));"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 1G
+        reservations:
+          cpus: "0.25"
+          memory: 256M
     logging:
       driver: json-file
       options:
-        max-size: 5m
-        max-file: "2"
+        max-size: 10m
+        max-file: "3"
+volumes:
+  bsv_data:

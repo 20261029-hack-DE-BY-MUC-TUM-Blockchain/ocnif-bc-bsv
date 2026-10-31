@@ -70,3 +70,16 @@ Eleven focused library tests cover approval binding, durable browser intent rese
 All validation transactions use the local mock chain. No mainnet payment, mainnet mint, public-chain-confirmed swap, user microphone action or sponsor acceptance is claimed. Production wallet configuration, a hosted overlay and independently approved real counterparties are still needed for that evidence.
 
 El pase se canjea por acceso al informe mientras el usuario conserve el UTXO admitido. Tras el intercambio, el antiguo titular pierde acceso y el nuevo titular firma su propio desafío. Las pruebas usan una cadena local; no demuestran pagos ni confirmaciones en mainnet. La billetera muestra y autoriza cada gasto real.
+
+## Local container verification
+
+The standalone Dockerfile runs type checks, all library/HTTP integration tests and the dependency high/critical audit during its build. Its final Node 26 Alpine stage contains compiled service code, production dependencies and native SQLite, runs as UID 1000, and excludes test fixtures, package managers and build-only TypeScript peers. Local Compose is for development only; production uses Azure Container Apps IaC.
+
+```sh
+# .env must already exist with operator-owned configuration.
+docker compose build
+docker compose up -d
+docker compose ps
+```
+
+On this macOS host, Apple Container can build the same standalone Dockerfile: `container build --platform linux/amd64 --cpus 4 --memory 6G -t ocnif-bc-bsv:local .`. Run Gitleaks on staged changes and in an isolated source-scan container, then scan the actual final image before deployment. Do not confuse a clean production-image scan with dependency-source vulnerability counts.

@@ -17,7 +17,7 @@ export async function startOverlay(config:Config,verification?:{chainTracker:Cha
   server.configurePort(config.overlayPort);server.configureNetwork(config.network);
   server.configureEdgePolicy({allowedOrigins:config.origins,jsonBodyLimitBytes:32768,binaryBodyLimitBytes:1_000_000,maxConcurrentRequests:16});
   if(verification)server.configureChainTracker(verification.chainTracker);
-  else {server.configureChaintracks(config.chaintracksUrl,{apiPrefix:'/chaintracks/v2',reorgStream:false});server.configureArcade(config.arcadeUrl);}
+  else {server.configureChaintracks(config.chaintracksUrl,{apiPrefix:'/chaintracks/v2',reorgStream:false});server.configureArcade(config.arcadeUrl);server.configureArcCallbackToken(config.arcCallbackToken);}
   await server.configureKnex({client:'better-sqlite3',connection:{filename:config.overlayDb},useNullAsDefault:true,pool:{min:1,max:1}});
   await server.knex!.raw('PRAGMA journal_mode = DELETE');await server.knex!.raw('PRAGMA busy_timeout = 5000');
   server.configureEnableGASPSync(false);server.configureEnableBASMSync(false);

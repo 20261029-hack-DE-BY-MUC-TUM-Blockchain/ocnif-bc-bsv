@@ -23,7 +23,7 @@ test('real BRC-121 paid report, issuer pass, ownership challenge and two-wallet 
  const issuerIdentityKey=(await seller.getPublicKey({identityKey:true})).publicKey;const buyerId=(await buyer.getPublicKey({identityKey:true})).publicKey;
  const report:PublishedReport={id:'published-test',title:'Reviewed lab report',content:'Synthetic test evidence only',cards:[],created_at:'now',published_at:'now',source:'user-approved'};
  let market:Awaited<ReturnType<typeof attachMarket>>;
- const config=loadConfig({OVERLAY_PRIVATE_KEY:PrivateKey.fromRandom().toHex(),INTERNAL_TOKEN:'test-only-not-a-production-token-1234',OVERLAY_PORT:String(port),OVERLAY_PUBLIC_URL:`http://127.0.0.1:${port}`,OVERLAY_DB:join(dir,'overlay.sqlite'),BSV_MARKET_DB:join(dir,'market.sqlite'),BSV_ISSUER_IDENTITY_KEY:issuerIdentityKey,BSV_NETWORK:(await seller.getNetwork({})).network==='mainnet'?'main':'test'});
+ const config=loadConfig({OVERLAY_PRIVATE_KEY:PrivateKey.fromRandom().toHex(),INTERNAL_TOKEN:'test-only-not-a-production-token-1234',BSV_ARC_CALLBACK_TOKEN:'test-only-distinct-arc-callback-token-5678',OVERLAY_PORT:String(port),OVERLAY_PUBLIC_URL:`http://127.0.0.1:${port}`,OVERLAY_DB:join(dir,'overlay.sqlite'),BSV_MARKET_DB:join(dir,'market.sqlite'),BSV_ISSUER_IDENTITY_KEY:issuerIdentityKey,BSV_NETWORK:(await seller.getNetwork({})).network==='mainnet'?'main':'test'});
  const server=await startOverlay(config,{chainTracker:chain.chainTracker,broadcaster:{async broadcast(tx){const txid=tx.id('hex');await chain.services.postBeef(Beef.fromBinary(tx.toBEEF()) as never,[txid]);return {status:'success',txid,message:'local mock chain'};}}},async(app)=>{market=await attachMarket(app,config,new HttpTokenOverlay(config.overlayUrl),merchant,async id=>id===report.id?report:null);});
  const request=(path:string,body?:unknown)=>fetch(config.overlayUrl+path,{method:body?'POST':'GET',headers:body?{'Content-Type':'application/json'}:{},body:body?JSON.stringify(body):undefined});
  try {
@@ -62,4 +62,11 @@ test('real BRC-121 paid report, issuer pass, ownership challenge and two-wallet 
   const nextChallenge=await request('/v1/reports/published-test/token-challenge',{outpoint:`${receipt.txid}.1`,holderIdentityKey:buyerId,keyIndex:0});assert.equal(nextChallenge.status,200);
   const nextAccess=await signReportAccess(buyer,await nextChallenge.json());assert.equal((await request('/v1/reports/published-test/token-access',nextAccess)).status,200);
  }finally{await server.close();market!.close();await chain.close();rmSync(dir,{recursive:true,force:true});}
+});
+
+test('production Arcade configuration starts without funds and requires a separate callback credential',async()=>{
+ const dir=mkdtempSync(join(tmpdir(),'ocnif-production-'));const port=await freePort();
+ const env={OVERLAY_PRIVATE_KEY:PrivateKey.fromRandom().toHex(),INTERNAL_TOKEN:'test-only-internal-authorization-token',BSV_ARC_CALLBACK_TOKEN:'test-only-distinct-arc-callback-token-5678',OVERLAY_PORT:String(port),OVERLAY_PUBLIC_URL:`http://127.0.0.1:${port}`,OVERLAY_DB:join(dir,'overlay.sqlite')};
+ assert.throws(()=>loadConfig({...env,BSV_ARC_CALLBACK_TOKEN:env.INTERNAL_TOKEN}),/distinct/);
+ const server=await startOverlay(loadConfig(env));try{assert.equal((await fetch(`http://127.0.0.1:${port}/health`)).status,200);assert.equal((await fetch(`http://127.0.0.1:${port}/arc-ingest`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${env.INTERNAL_TOKEN}`},body:'{}'})).status,401);}finally{await server.close();rmSync(dir,{recursive:true,force:true});}
 });

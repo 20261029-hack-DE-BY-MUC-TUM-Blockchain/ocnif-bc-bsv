@@ -2,7 +2,7 @@ import {PrivateKey, PublicKey} from '@bsv/sdk';
 export interface Config {
   overlayPort:number; overlayUrl:string; overlayInternalUrl:string; overlayDb:string;
   marketDb:string; walletDb:string; network:'main'|'test'; origins:string[];
-  overlayKey:string; adminToken:string; merchantKey?:string; issuerIdentity?:string;
+  overlayKey:string; adminToken:string; arcCallbackToken:string; merchantKey?:string; issuerIdentity?:string;
   chaintracksUrl:string; arcadeUrl:string; backendUrl:string; internalToken:string;
   reportSatoshis:number; paymentWindowMs:number;
 }
@@ -17,13 +17,15 @@ export function loadConfig(env:NodeJS.ProcessEnv=process.env):Config {
   const overlayKey=env.OVERLAY_PRIVATE_KEY??'';PrivateKey.fromHex(overlayKey);
   if(!/^[a-f0-9]{64}$/.test(overlayKey))throw new Error('OVERLAY_PRIVATE_KEY is required');
   const adminToken=env.INTERNAL_TOKEN??'';if(adminToken.length<32)throw new Error('INTERNAL_TOKEN is required');
+  const arcCallbackToken=env.BSV_ARC_CALLBACK_TOKEN??'';if(arcCallbackToken.length<32)throw new Error('BSV_ARC_CALLBACK_TOKEN is required');
+  if(arcCallbackToken===adminToken)throw new Error('ARC callback token must be distinct from internal authorization');
   const merchantKey=env.BSV_MERCHANT_PRIVATE_KEY||undefined;if(merchantKey)PrivateKey.fromHex(merchantKey);
   const issuerIdentity=env.BSV_ISSUER_IDENTITY_KEY||undefined;if(issuerIdentity)PublicKey.fromString(issuerIdentity);
   return {overlayPort:integer(env.OVERLAY_PORT??'8097',1,65535),
     overlayUrl:url(env.OVERLAY_PUBLIC_URL??'http://127.0.0.1:8097'),overlayInternalUrl:url(env.OVERLAY_INTERNAL_URL??`http://127.0.0.1:${env.OVERLAY_PORT??'8097'}`),overlayDb:env.OVERLAY_DB??'/data/overlay.sqlite',
     marketDb:env.BSV_MARKET_DB??'/data/market.sqlite',walletDb:env.BSV_MERCHANT_DB??'/data/merchant.sqlite',network,
     origins:(env.ALLOWED_ORIGINS??'http://localhost:3000').split(',').map(x=>new URL(x.trim()).origin),
-    overlayKey,adminToken,merchantKey,issuerIdentity,chaintracksUrl:url(env.CHAINTRACKS_URL??'https://arcade-v2-us-1.bsvblockchain.tech'),
+    overlayKey,adminToken,arcCallbackToken,merchantKey,issuerIdentity,chaintracksUrl:url(env.CHAINTRACKS_URL??'https://arcade-v2-us-1.bsvblockchain.tech'),
     arcadeUrl:url(env.ARCADE_URL??'https://arcade-v2-us-1.bsvblockchain.tech'),backendUrl:url(env.BACKEND_URL??'http://127.0.0.1:8080',true),internalToken:adminToken,
     reportSatoshis:integer(env.BSV_REPORT_SATOSHIS??'100',1,100000000),paymentWindowMs:integer(env.BSV_PAYMENT_WINDOW_MS??'300000',30000,600000)};
 }

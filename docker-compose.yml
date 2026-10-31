@@ -1,0 +1,12 @@
+services:
+  verify-bsv:
+    build: .
+    image: ocnif-bc-bsv:local
+    restart: "no"
+    mem_limit: 512m
+    cpus: 1
+    logging:
+      driver: json-file
+      options:
+        max-size: 5m
+        max-file: "2"
